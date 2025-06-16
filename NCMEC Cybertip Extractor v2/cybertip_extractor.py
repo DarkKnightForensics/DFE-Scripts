@@ -31,7 +31,7 @@ class CyberTipExtractorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("CyberTip Extractor v2.0")
-        self.root.geometry("750x850")
+        self.root.geometry("800x850")
         self.data = defaultdict(set)
         self.loaded_files = set()
         self.dark_mode = False
@@ -92,36 +92,81 @@ class CyberTipExtractorApp:
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        tk.Label(self.scrollable_frame, text="Drag & drop or select PDF/ZIP files.").grid(row=0, column=0, columnspan=4, pady=10)
         self.drop_area = tk.Label(self.scrollable_frame, text="Drop PDF or ZIP files here", bg="#e0e0e0", width=70, height=5, relief="ridge")
         self.drop_area.grid(row=1, column=0, columnspan=4, pady=5)
         self.drop_area.drop_target_register('DND_Files')
         self.drop_area.dnd_bind('<<Drop>>', self.handle_drop)
+        self._add_tooltip(self.drop_area, "Drag and drop PDF or ZIP files here to extract data.")
 
-        tk.Button(self.scrollable_frame, text="Select Files", command=self.select_files).grid(row=2, column=0, pady=5)
-        tk.Button(self.scrollable_frame, text="Clear Loaded Files", command=self.clear_files).grid(row=2, column=1, pady=5)
-        tk.Button(self.scrollable_frame, text="Export to TXT", command=self.export_to_txt).grid(row=2, column=2, pady=5)
-        tk.Button(self.scrollable_frame, text="Export Log", command=self.export_log).grid(row=2, column=3, pady=5)
+        # Row 2: Select Files and Select Folder side by side
+        btn_select_menu = tk.Menubutton(self.scrollable_frame, text="Select Files/Folder", relief=tk.RAISED)
+        select_menu = tk.Menu(btn_select_menu, tearoff=0)
+        select_menu.add_command(label="Select Files", command=self.select_files)
+        select_menu.add_command(label="Select Folder", command=self.select_folder)
+        btn_select_menu.config(menu=select_menu)
+        btn_select_menu.grid(row=2, column=0, pady=5)
+        self._add_tooltip(btn_select_menu, "Select PDF/ZIP files or a folder containing them.")
+        btn_clear = tk.Button(self.scrollable_frame, text="Clear Loaded Files", command=self.clear_files)
+        btn_clear.grid(row=2, column=1, pady=5)
+        self._add_tooltip(btn_clear, "Clear all loaded files and extracted data.")
+        btn_export = tk.Button(self.scrollable_frame, text="Export to TXT", command=self.export_to_txt)
+        btn_export.grid(row=2, column=2, pady=5)
+        self._add_tooltip(btn_export, "Export extracted data to TXT files.")
+        btn_log = tk.Button(self.scrollable_frame, text="Export Log", command=self.export_log)
+        btn_log.grid(row=2, column=3, pady=5)
+        self._add_tooltip(btn_log, "Export the application log file.")
 
         tk.Label(self.scrollable_frame, text="Loaded Files (with MD5 Hash):").grid(row=3, column=0, sticky='w')
         self.file_listbox = tk.Listbox(self.scrollable_frame, width=100, height=6)
         self.file_listbox.grid(row=4, column=0, columnspan=4, pady=5)
 
         self.data_listboxes = {}
+        self.export_buttons = {}
+        self.copy_buttons = {}
         data_fields = ['hashes', 'ips', 'emails', 'phones', 'usernames', 'platforms']
         for idx, field in enumerate(data_fields):
-            row = 5 + (idx // 2) * 2
+            row = 6 + (idx // 2) * 2
             col = (idx % 2) * 2
-            tk.Label(self.scrollable_frame, text=field.title() + ":").grid(row=row, column=col, sticky='w')
+            label_text = 'IPs' if field == 'ips' else field.title()
+            tk.Label(self.scrollable_frame, text=label_text + ":").grid(row=row, column=col, sticky='w')
             listbox = tk.Listbox(self.scrollable_frame, width=40, height=6)
             listbox.grid(row=row+1, column=col, padx=10, pady=5)
             self.data_listboxes[field] = listbox
+            # Export button for each data type (right of listbox)
+            btn_export_type_text = f"Export IPs" if field == 'ips' else f"Export {field.title()}"
+            btn_export_type = tk.Button(self.scrollable_frame, text=btn_export_type_text, command=lambda f=field: self.export_single_type(f))
+            btn_export_type.grid(row=row+1, column=col+1, padx=5, pady=5, sticky='w')
+            self._add_tooltip(btn_export_type, f"Export only {label_text} to a TXT file.")
+            self.export_buttons[field] = btn_export_type
+            # Add right-click context menu for Copy All
+            menu = tk.Menu(listbox, tearoff=0)
+            menu.add_command(label="Copy All", command=lambda f=field: self.copy_all_to_clipboard(f))
+            def show_menu(event, m=menu):
+                m.tk_popup(event.x_root, event.y_root)
+            listbox.bind("<Button-3>", show_menu)
 
+        # Place status and progress bar after all data fields
+        last_row = 6 + ((len(data_fields) + 1) // 2) * 2  # Find the next available row after all data fields
         self.status = tk.Label(self.scrollable_frame, text="Ready.", fg="green")
-        self.status.grid(row=11, column=0, columnspan=4, pady=10)
-
+        self.status.grid(row=last_row, column=0, columnspan=4, pady=10)
         self.progress = ttk.Progressbar(self.scrollable_frame, orient=tk.HORIZONTAL, length=600, mode='determinate')
-        self.progress.grid(row=12, column=0, columnspan=4, pady=10)
+        self.progress.grid(row=last_row+1, column=0, columnspan=4, pady=10)
+
+    def _add_tooltip(self, widget, text):
+        tooltip = tk.Toplevel(widget)
+        tooltip.withdraw()
+        tooltip.overrideredirect(True)
+        label = tk.Label(tooltip, text=text, background='#ffffe0', relief='solid', borderwidth=1, font=(None, 9))
+        label.pack(ipadx=1)
+        def enter(event):
+            x = event.x_root + 10
+            y = event.y_root + 10
+            tooltip.geometry(f'+{x}+{y}')
+            tooltip.deiconify()
+        def leave(event):
+            tooltip.withdraw()
+        widget.bind('<Enter>', enter)
+        widget.bind('<Leave>', leave)
 
     def show_about(self):
         messagebox.showinfo(
@@ -171,28 +216,68 @@ class CyberTipExtractorApp:
             self.logger.error(f"Failed to export data: {e}")
             messagebox.showerror("Export Error", f"An error occurred while exporting:\n{e}")
 
+    def export_single_type(self, key):
+        values = self.data.get(key, set())
+        if not values:
+            messagebox.showinfo("Export", f"No {key} data to export.")
+            return
+        filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt")], title=f"Export {key.title()} to TXT")
+        if not filename:
+            return
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                for item in sorted(values):
+                    f.write(item + "\n")
+            self.logger.info(f"Exported {len(values)} {key} items to {filename}")
+            messagebox.showinfo("Export Complete", f"Exported {len(values)} {key} items to {filename}")
+        except Exception as e:
+            self.logger.error(f"Failed to export {key}: {e}")
+            messagebox.showerror("Export Error", f"An error occurred while exporting {key}:\n{e}")
+
+    def copy_all_to_clipboard(self, key):
+        values = self.data.get(key, set())
+        if not values:
+            self.status.config(text=f"No {key} data to copy.", fg="orange")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append('\n'.join(sorted(values)))
+        self.status.config(text=f"Copied all {key} to clipboard!", fg="green")
+
     def handle_drop(self, event):
+        # Drag-and-drop highlight
+        self.drop_area.config(bg="#b3d9ff")
+        self.root.after(150, lambda: self.drop_area.config(bg="#e0e0e0"))
         paths = self.root.tk.splitlist(event.data)
         files = [p for p in paths if p.lower().endswith(('.pdf', '.zip'))]
-        self.load_files(files)
+        unsupported = [p for p in paths if not p.lower().endswith(('.pdf', '.zip'))]
+        if unsupported:
+            self.status.config(text=f"Unsupported file(s) skipped: {', '.join(os.path.basename(u) for u in unsupported)}", fg="orange")
+        if files:
+            self.load_files(files)
+        elif unsupported:
+            return
+        else:
+            self.status.config(text="No files to process.", fg="orange")
 
-    def select_files(self):
-        file_paths = filedialog.askopenfilenames(filetypes=[("Supported Files", "*.pdf *.zip")])
-        self.load_files(file_paths)
+    def _add_file_to_listbox(self, filename, md5_hash):
+        ext = os.path.splitext(filename)[1].lower()
+        label = "[PDF]" if ext == ".pdf" else ("[ZIP]" if ext == ".zip" else "[FILE]")
+        display_str = f"{label} {os.path.basename(filename)}  |  MD5: {md5_hash}"
+        self.file_listbox.insert(tk.END, display_str)
 
     def load_files(self, paths):
         start_all = time.time()
-        total_files = len([p for p in paths if p.lower().endswith(('.pdf', '.zip')) and p not in self.loaded_files])
+        new_files = [p for p in paths if p.lower().endswith(('.pdf', '.zip')) and p not in self.loaded_files]
         self.progress['value'] = 0
-        self.progress['maximum'] = total_files if total_files > 0 else 1
+        self.progress['maximum'] = len(new_files) if new_files else 1
         processed = 0
-        for path in paths:
-            if path in self.loaded_files:
-                continue
-            if not path.lower().endswith(('.pdf', '.zip')):
-                self.logger.warning(f"Skipped unsupported file type: {path}")
-                messagebox.showwarning("Unsupported File", f"File skipped (not PDF/ZIP): {os.path.basename(path)}")
-                continue
+        errors = []
+        if not new_files:
+            self.status.config(text="No new files to process.", fg="orange")
+            return
+        self.status.config(text="Processing files...", fg="blue")
+        self.root.update_idletasks()
+        for path in new_files:
             try:
                 # Compute and log MD5 hash before processing
                 md5_hash = self._get_md5_hash(path)
@@ -204,24 +289,30 @@ class CyberTipExtractorApp:
                 elif path.lower().endswith(".pdf"):
                     self.process_pdf(path)
                 self.loaded_files.add(path)
-                display_str = f"{os.path.basename(path)}  |  MD5: {md5_hash}"
-                self.file_listbox.insert(tk.END, display_str)
+                self._add_file_to_listbox(path, md5_hash)
                 elapsed = time.time() - start
                 self.logger.info(f"Finished processing: {path} in {elapsed:.2f} seconds")
                 for key in self.data:
-                    self.logger.info(f"{key}: {len(self.data[key])} items extracted after {os.path.basename(path)}")
+                    self.logger.debug(f"{key}: {len(self.data[key])} items extracted after {os.path.basename(path)}")
+            except (OSError, zipfile.BadZipFile, fitz.fitz.FileDataError) as e:
+                self.logger.error(f"File I/O or format error for {path}: {e}")
+                errors.append(f"{os.path.basename(path)}: {e}")
             except Exception as e:
                 self.logger.error(f"Failed to process {path}: {e}")
-                self.show_error_popup(f"Failed to process {os.path.basename(path)}:\n{e}")
+                errors.append(f"{os.path.basename(path)}: {e}")
             processed += 1
             self.progress['value'] = processed
-            self.root.update_idletasks()
-        self.refresh_display()
+        self.refresh_display()  # Only update listboxes once
         total_elapsed = time.time() - start_all
         self.logger.info(f"All files processed in {total_elapsed:.2f} seconds. Total files: {len(self.loaded_files)}")
         for key in self.data:
             self.logger.info(f"SUMMARY: {key}: {len(self.data[key])} total items.")
         self.progress['value'] = 0
+        if errors:
+            self.status.config(text="Some files could not be processed.", fg="red")
+            self.show_error_popup("Some files could not be processed:\n" + "\n".join(errors))
+        else:
+            self.status.config(text=f"Done! Processed {len(new_files)} file(s).", fg="green")
 
     def show_error_popup(self, msg):
         # Improved error popup with copy option
@@ -304,18 +395,30 @@ class CyberTipExtractorApp:
                 self.data['ips'].add(f"{ip} → {ts_clean}")
             except Exception:
                 continue
-        for email in self.EMAIL_PATTERN.findall(section_text):
+        # Enhanced email extraction with logging
+        email_matches = list(self.EMAIL_PATTERN.findall(section_text))
+        for email in email_matches:
             if not any(domain in email.lower() for domain in [".gov", "@ncmec.org", "@ilag.gov"]):
                 self.data['emails'].add(email)
-        for match in self.PHONE_PATTERN.finditer(section_text):
+                self.logger.debug(f"Extracted email: {email}")
+        if not self.data['emails']:
+            self.logger.debug(f"No emails found in section: {section_text[:100]}...")
+        # Enhanced phone extraction with logging
+        phone_matches = list(self.PHONE_PATTERN.finditer(section_text))
+        for match in phone_matches:
             phone = match.group(1)
             digits_only = re.sub(r"\D", "", phone)
             if digits_only not in {"2177829030", "8774462632"} and not any(digits_only in h for h in md5_set):
                 self.data['phones'].add(phone)
+                self.logger.debug(f"Extracted phone: {phone}")
+        if not self.data['phones']:
+            self.logger.debug(f"No phones found in section: {section_text[:100]}...")
         patterns = ["Screen/User Name:", "Display Name:", "ESP User ID:"]
         for key in patterns:
             usernames = re.findall(fr"{key}\s*(\S+)", section_text)
             self.data['usernames'].update(usernames)
+            for username in usernames:
+                self.logger.debug(f"Extracted username: {username}")
 
     def process_zip_file(self, path):
         with zipfile.ZipFile(path, 'r') as zip_ref:
@@ -363,6 +466,31 @@ class CyberTipExtractorApp:
             self.root.option_add('*Menu.activeForeground', fg)
         except Exception:
             pass
+
+    def select_files(self):
+        file_paths = filedialog.askopenfilenames(filetypes=[("Supported Files", "*.pdf *.zip")])
+        unsupported = [p for p in file_paths if not p.lower().endswith(('.pdf', '.zip'))]
+        if unsupported:
+            self.status.config(text=f"Unsupported file(s) skipped: {', '.join(os.path.basename(u) for u in unsupported)}", fg="orange")
+        files = [p for p in file_paths if p.lower().endswith(('.pdf', '.zip'))]
+        if files:
+            self.load_files(files)
+        elif unsupported:
+            return
+        else:
+            self.status.config(text="No files to process.", fg="orange")
+
+    def select_folder(self):
+        folder_path = filedialog.askdirectory(title="Select Folder Containing PDF/ZIP Files")
+        if not folder_path:
+            return
+        files = [os.path.join(folder_path, f) for f in os.listdir(folder_path)
+                 if f.lower().endswith(('.pdf', '.zip'))]
+        if not files:
+            self.status.config(text="No PDF or ZIP files found in selected folder.", fg="orange")
+            return
+        self.load_files(files)
+        self.logger.info(f"Loaded {len(files)} file(s) from folder: {folder_path}")
 
 if __name__ == '__main__':
     root = TkinterDnD.Tk()
